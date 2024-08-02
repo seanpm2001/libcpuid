@@ -1,0 +1,63 @@
+name: Build (NetBSD)
+
+on:
+  push:
+    branches:
+      - '*'
+  pull_request:
+    branches:
+      - '*'
+
+jobs:
+  build_netbsd:
+    name: Build on ${{ matrix.box }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        box:
+          - generic/netbsd9
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Provision VM
+      uses: hummeltech/vagrant-action@v1
+      with:
+        box: ${{ matrix.box }}
+        save_box_to_cache: true
+        provision_commands: >-
+          . /etc/profile;
+          echo '. /etc/profile' >> /etc/bash.bashrc;
+          echo '. /etc/profile' >> ~vagrant/.bashrc;
+          set -x;
+          pkgin update;
+          pkgin -y upgrade;
+          pkgin -y install rsync;
+          echo 'AcceptEnv *' >> /etc/ssh/sshd_config;
+          service sshd restart;
+          mkdir -p ${{ github.workspace }};
+          chown vagrant:vagrant ${{ github.workspace }};
+          mkdir -p ${{ runner.temp }};
+          chown vagrant:vagrant ${{ runner.temp }};
+
+    - name: Install packages
+      run: sudo pkgin -y install clang cmake python311
+
+    - name: Generate build system
+      run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_INSTALL_PREFIX="" -DLIBCPUID_ENABLE_TESTS=ON
+
+    - name: Build
+      run: cmake --build build
+
+    - name: Run cpuid_tool
+      run: ./build/cpuid_tool/cpuid_tool --save=- --all
+
+    - name: Run tests
+      run: |
+        make -C build consistency
+        make -C build test-old
+
+    - name: Install
+      run: cmake --install build
+      env:
+        DESTDIR: ${{ github.workspace }}/installdir
